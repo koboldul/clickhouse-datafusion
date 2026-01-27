@@ -48,7 +48,7 @@ use clickhouse_arrow::{
     ClientBuilder, CreateOptions, Destination,
 };
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::catalog::{CatalogProvider, TableProviderFactory};
+use datafusion::catalog::{CatalogProvider, TableProvider, TableProviderFactory};
 use datafusion::common::{Constraints, DFSchema};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_expr::CreateExternalTable;
@@ -85,9 +85,9 @@ pub fn default_arrow_options() -> ArrowOptions {
 /// default is `true`. This can be disabled by modifying the setting via
 /// [`ClickHouseBuilder::configure_arrow_options`]
 pub struct ClickHouseBuilder {
-    endpoint:          Destination,
-    pool_builder:      ArrowConnectionPoolBuilder,
-    factory:           ClickHouseTableProviderFactory,
+    endpoint: Destination,
+    pool_builder: ArrowConnectionPoolBuilder,
+    factory: ClickHouseTableProviderFactory,
     write_concurrency: Option<usize>,
 }
 
@@ -253,17 +253,17 @@ impl ClickHouseBuilder {
 /// these tables will fail.
 #[derive(Clone)]
 pub struct ClickHouseCatalogBuilder {
-    catalog:  String,
+    catalog: String,
     /// The current schema the builder is targeting.
-    schema:   String,
+    schema: String,
     /// The configured remote endpoint the underlying `ClickHouse` pool is connected.
     endpoint: String,
     /// The `ClickHouse` connection used to communicate with the remote `ClickHouse` database.
-    pool:     Arc<ClickHouseConnectionPool>,
+    pool: Arc<ClickHouseConnectionPool>,
     /// This factory is used to create new tables in the remote `ClickHouse` database. This builder
     /// must be built with one of the builder variations, ie `Self::build` or `Self::build_schema`,
     /// so that the provider reflects the most current remote schema.
-    factory:  ClickHouseTableProviderFactory,
+    factory: ClickHouseTableProviderFactory,
     /// The catalog provider is a passive catalog provider, meaning it must be "refreshed" after
     /// table creation or schema change of any type to the remove `ClickHouse` database.
     provider: Arc<ClickHouseCatalogProvider>,
@@ -314,11 +314,15 @@ impl ClickHouseCatalogBuilder {
     }
 
     /// Return the name of the catalog in `DataFusion`'s context that this builder is configuring.
-    pub fn name(&self) -> &str { &self.catalog }
+    pub fn name(&self) -> &str {
+        &self.catalog
+    }
 
     /// Return the currently set schema (database) being targeted. Can be changed on the fly by
     /// calling `Self::with_schema`.
-    pub fn schema(&self) -> &str { &self.schema }
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
 
     /// Update the current "schema" (database) that this builder is targeting, and continue
     /// building.
@@ -411,7 +415,7 @@ impl ClickHouseCatalogBuilder {
         name: impl Into<TableReference>,
         name_as: Option<impl Into<TableReference>>,
         ctx: &SessionContext,
-    ) -> Result<()> {
+    ) -> Result<Arc<dyn TableProvider>> {
         let name = name.into();
         let database = name.schema().unwrap_or(&self.schema);
         let exists =
@@ -430,9 +434,11 @@ impl ClickHouseCatalogBuilder {
         let factory = ClickHouseTableFactory::new(Arc::clone(&self.pool));
         let provider = factory.table_provider(table).await?;
         debug!(?table_as, "Registering ClickHouse table provider");
-        drop(ctx.register_table(table_as, provider)?);
 
-        Ok(())
+        // `SessionContext::register_table` returns the previously-registered table (if any).
+        // `None` means the registration succeeded and nothing was replaced.
+        let _prev = ctx.register_table(table_as, Arc::clone(&provider))?;
+        Ok(provider)
     }
 
     /// Build the current `schema` (database) being managed by this catalog, optionally registering
@@ -504,9 +510,9 @@ impl ClickHouseCatalogBuilder {
 /// Builder phase for creating `ClickHouse` tables.
 #[derive(Clone)]
 pub struct ClickHouseTableCreator {
-    name:    String,
+    name: String,
     builder: ClickHouseCatalogBuilder,
-    schema:  SchemaRef,
+    schema: SchemaRef,
     options: CreateOptions,
     /// Whether the create external table command will replace existing table
     replace: bool,
