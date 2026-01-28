@@ -404,6 +404,35 @@ impl ClickHouseCatalogBuilder {
         }
     }
 
+    /// Get a `TableProvider` for an existing `ClickHouse` table without registering it to the
+    /// session context. This is useful when you need to manage registration separately.
+    ///
+    /// # Errors
+    /// - Returns an error if the table does not exist in the remote database
+    pub async fn get_table_provider(
+        &self,
+        name: impl Into<TableReference>,
+    ) -> Result<Arc<dyn TableProvider>> {
+        let name = name.into();
+        let database = name.schema().unwrap_or(&self.schema);
+        let exists =
+            self.pool.connect().await?.tables(database).await?.contains(&name.table().to_string());
+
+        if !exists {
+            return Err(DataFusionError::Plan(format!(
+                "Table '{name}' does not exist in ClickHouse database '{database}', use \
+                 `table_creator` instead"
+            )));
+        }
+
+        let table = TableReference::full(self.catalog.as_str(), database, name.table());
+        let factory = ClickHouseTableFactory::new(Arc::clone(&self.pool));
+        let provider = factory.table_provider(table).await?;
+        debug!(?name, "Created ClickHouse table provider (not registered)");
+
+        Ok(provider)
+    }
+
     /// Register an existing `ClickHouse` table, optionally renaming it in the provided session
     /// state.
     ///
