@@ -1,11 +1,14 @@
 //! Core helpers for adapting a [`SessionContext`] to `ClickHouse` semantics.
 //! The types defined here keep ClickHouse-specific UDFs, query planners, and
-//! optimiser rules intact while still exposing DataFusion’s familiar APIs.
+//! optimiser rules intact while still exposing `DataFusion`'s familiar APIs.
 //! [`ClickHouseQueryPlanner`] can be stacked with additional extension planners,
 //! while [`ClickHouseSessionContext`] ensures the rebuilt session keeps remote
 //! pushdown logic, custom UDFs, and any caller-provided configuration.
+pub mod extension;
 pub mod plan_node;
 pub mod planner;
+
+pub use extension::ClickHouseContextExtension;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -128,7 +131,9 @@ impl std::fmt::Debug for ClickHouseQueryPlanner {
 }
 
 impl Default for ClickHouseQueryPlanner {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ClickHouseQueryPlanner {
@@ -182,7 +187,7 @@ impl QueryPlanner for ClickHouseQueryPlanner {
 /// to re-apply them after construction.
 #[derive(Clone)]
 pub struct ClickHouseSessionContext {
-    inner:        SessionContext,
+    inner: SessionContext,
     expr_planner: Option<Arc<dyn ExprPlanner>>,
 }
 
@@ -233,13 +238,17 @@ impl ClickHouseSessionContext {
     }
 
     /// Access the underlying session context by reference.
-    pub fn session_context(&self) -> &SessionContext { &self.inner }
+    pub fn session_context(&self) -> &SessionContext {
+        &self.inner
+    }
 
     /// Consume the wrapper and return the underlying [`SessionContext`].
     ///
     /// This bypasses the `ClickHouse` convenience APIs; further calls must ensure
     /// pushdown-related configuration stays consistent.
-    pub fn into_session_context(self) -> SessionContext { self.inner }
+    pub fn into_session_context(self) -> SessionContext {
+        self.inner
+    }
 
     /// Execute SQL using the ClickHouse-aware session (see [`SessionContext::sql`]).
     /// # Errors
@@ -306,30 +315,36 @@ impl ClickHouseSessionContext {
     fn get_parser_options(state: &SessionState) -> ParserOptions {
         let sql_parser_options = &state.config().options().sql_parser;
         ParserOptions {
-            parse_float_as_decimal:             sql_parser_options.parse_float_as_decimal,
-            enable_ident_normalization:         sql_parser_options.enable_ident_normalization,
+            parse_float_as_decimal: sql_parser_options.parse_float_as_decimal,
+            enable_ident_normalization: sql_parser_options.enable_ident_normalization,
             enable_options_value_normalization: sql_parser_options
                 .enable_options_value_normalization,
-            support_varchar_with_length:        sql_parser_options.support_varchar_with_length,
-            map_string_types_to_utf8view:       sql_parser_options.map_string_types_to_utf8view,
-            collect_spans:                      sql_parser_options.collect_spans,
-            default_null_ordering:              NullOrdering::NullsMax,
+            support_varchar_with_length: sql_parser_options.support_varchar_with_length,
+            map_string_types_to_utf8view: sql_parser_options.map_string_types_to_utf8view,
+            collect_spans: sql_parser_options.collect_spans,
+            default_null_ordering: NullOrdering::NullsMax,
         }
     }
 }
 
 impl From<SessionContext> for ClickHouseSessionContext {
-    fn from(inner: SessionContext) -> Self { Self::new(inner, None) }
+    fn from(inner: SessionContext) -> Self {
+        Self::new(inner, None)
+    }
 }
 
 impl From<&SessionContext> for ClickHouseSessionContext {
-    fn from(inner: &SessionContext) -> Self { Self::new(inner.clone(), None) }
+    fn from(inner: &SessionContext) -> Self {
+        Self::new(inner.clone(), None)
+    }
 }
 
 impl std::ops::Deref for ClickHouseSessionContext {
     type Target = SessionContext;
 
-    fn deref(&self) -> &Self::Target { &self.inner }
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 /// Custom [`ContextProvider`]
@@ -337,10 +352,10 @@ impl std::ops::Deref for ClickHouseSessionContext {
 /// Required since `DataFusion` will throw an error on unrecognized functions and the goal is to
 /// preserve the Expr structure.
 pub struct ClickHouseContextProvider {
-    state:         SessionState,
-    tables:        HashMap<ResolvedTableReference, Arc<dyn TableSource>>,
+    state: SessionState,
+    tables: HashMap<ResolvedTableReference, Arc<dyn TableSource>>,
     expr_planners: Vec<Arc<dyn ExprPlanner>>,
-    type_planner:  Option<Arc<dyn TypePlanner>>,
+    type_planner: Option<Arc<dyn TypePlanner>>,
 }
 
 impl ClickHouseContextProvider {
@@ -401,7 +416,9 @@ impl ContextProvider for ClickHouseContextProvider {
         Some(Arc::new(ScalarUDF::new_from_impl(PlaceholderUDF::new(name))))
     }
 
-    fn get_expr_planners(&self) -> &[Arc<dyn ExprPlanner>] { &self.expr_planners }
+    fn get_expr_planners(&self) -> &[Arc<dyn ExprPlanner>] {
+        &self.expr_planners
+    }
 
     fn get_type_planner(&self) -> Option<Arc<dyn TypePlanner>> {
         if let Some(type_planner) = &self.type_planner {
@@ -469,16 +486,22 @@ impl ContextProvider for ClickHouseContextProvider {
             .and_then(|provider| provider.get(&provider_type)?.get_type(variable_names))
     }
 
-    fn options(&self) -> &ConfigOptions { self.state.config_options() }
+    fn options(&self) -> &ConfigOptions {
+        self.state.config_options()
+    }
 
     /// Return the names of registered scalar UDFs.
-    fn udf_names(&self) -> Vec<String> { self.state.scalar_functions().keys().cloned().collect() }
+    fn udf_names(&self) -> Vec<String> {
+        self.state.scalar_functions().keys().cloned().collect()
+    }
 
     fn udaf_names(&self) -> Vec<String> {
         self.state.aggregate_functions().keys().cloned().collect()
     }
 
-    fn udwf_names(&self) -> Vec<String> { self.state.window_functions().keys().cloned().collect() }
+    fn udwf_names(&self) -> Vec<String> {
+        self.state.window_functions().keys().cloned().collect()
+    }
 
     fn get_file_type(&self, ext: &str) -> Result<Arc<dyn FileType>> {
         self.state

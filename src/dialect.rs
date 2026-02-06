@@ -13,12 +13,81 @@ use crate::udfs::apply::ClickHouseApplyRewriter;
 use crate::udfs::clickhouse::CLICKHOUSE_UDF_ALIASES;
 use crate::udfs::eval::CLICKHOUSE_EVAL_UDF_ALIASES;
 
-/// A custom [`UnparserDialect`] for `ClickHouse`.
+/// A custom dialect for `ClickHouse` supporting both parsing and unparsing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct ClickHouseDialect;
 
+// Parser Dialect implementation
+impl dialect::Dialect for ClickHouseDialect {
+    fn is_identifier_start(&self, ch: char) -> bool {
+        ch.is_ascii_lowercase() || ch.is_ascii_uppercase() || ch == '_'
+    }
+
+    fn is_identifier_part(&self, ch: char) -> bool {
+        self.is_identifier_start(ch) || ch.is_ascii_digit()
+    }
+
+    fn supports_string_literal_backslash_escape(&self) -> bool {
+        true
+    }
+
+    fn supports_select_wildcard_except(&self) -> bool {
+        true
+    }
+
+    fn describe_requires_table_keyword(&self) -> bool {
+        true
+    }
+
+    fn require_interval_qualifier(&self) -> bool {
+        true
+    }
+
+    fn supports_limit_comma(&self) -> bool {
+        true
+    }
+
+    fn supports_insert_table_function(&self) -> bool {
+        true
+    }
+
+    fn supports_insert_format(&self) -> bool {
+        true
+    }
+
+    fn supports_numeric_literal_underscores(&self) -> bool {
+        true
+    }
+
+    fn supports_dictionary_syntax(&self) -> bool {
+        true
+    }
+
+    fn supports_lambda_functions(&self) -> bool {
+        false
+    }
+
+    fn supports_from_first_select(&self) -> bool {
+        true
+    }
+
+    fn supports_order_by_all(&self) -> bool {
+        true
+    }
+
+    fn supports_group_by_expr(&self) -> bool {
+        true
+    }
+
+    fn supports_group_by_with_modifier(&self) -> bool {
+        true
+    }
+}
+
 impl UnparserDialect for ClickHouseDialect {
-    fn identifier_quote_style(&self, _: &str) -> Option<char> { Some('`') }
+    fn identifier_quote_style(&self, _: &str) -> Option<char> {
+        Some('`')
+    }
 
     fn scalar_function_to_sql_overrides(
         &self,

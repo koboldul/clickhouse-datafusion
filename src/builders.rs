@@ -571,7 +571,7 @@ impl ClickHouseTableCreator {
     ///
     /// # Errors
     /// - Returns an error if the `TableProviderFactory` fails to create the table
-    /// - Returnes an error if an error occurs while refreshing the catalog
+    /// - Returns an error if an error occurs while refreshing the catalog
     pub async fn create(self, ctx: &SessionContext) -> Result<ClickHouseCatalogBuilder> {
         let schema = self.builder.schema.clone();
         let table = self.name;

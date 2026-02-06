@@ -2,10 +2,13 @@
 //!
 //! [`self::eval::ClickHouseEval`] is a sort of 'escape-hatch' to allow passing syntax directly
 //! to `ClickHouse` as SQL.
+pub mod aggregates;
 pub mod apply;
 pub mod clickhouse;
+pub mod dictget;
 pub mod eval;
 pub mod placeholder;
+pub mod time_functions;
 
 use std::str::FromStr;
 
@@ -16,14 +19,25 @@ use datafusion::logical_expr::ReturnFieldArgs;
 use datafusion::prelude::SessionContext;
 use datafusion::scalar::ScalarValue;
 
+// Re-export convenience constructors
+pub use aggregates::arg_max_udaf;
+pub use dictget::{DictionarySchemaMap, dict_get_udf};
+pub use time_functions::{to_start_of_month_udf, to_start_of_week_udf};
+
 // TODO: Docs - explain how this registers the best-effort UDF that can be used when the full
 // `ClickHouseQueryPlanner` is not available.
 //
-/// Registers `ClickHouse`-specific UDFs with the provided [`SessionContext`].
+/// Registers `ClickHouse`-specific UDFs and UDAFs with the provided [`SessionContext`].
 pub fn register_clickhouse_functions(ctx: &SessionContext) {
+    // Scalar UDFs
     ctx.register_udf(eval::clickhouse_eval_udf());
     ctx.register_udf(clickhouse::clickhouse_udf());
     ctx.register_udf(apply::clickhouse_apply_udf());
+    ctx.register_udf(to_start_of_week_udf());
+    ctx.register_udf(to_start_of_month_udf());
+
+    // Aggregate UDAFs
+    ctx.register_udaf(arg_max_udaf());
 }
 
 /// Helper function to extract return [`DataType`] from second UDF arg
@@ -214,7 +228,7 @@ pub mod functions {
                             func: Arc::new(clickhouse_apply_udf()),
                             args: vec![
                                 Expr::Placeholder(Placeholder {
-                                    id:    "x0".to_string(),
+                                    id: "x0".to_string(),
                                     field: None,
                                 }),
                                 Expr::Column(Column::from_name("id")) + lit(5),
@@ -271,7 +285,7 @@ mod tests {
             Some(ScalarValue::Utf8(Some("Int64".to_string()))),
         ];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
         let result = extract_return_field_from_args("test_func", &args);
@@ -291,7 +305,7 @@ mod tests {
             Some(ScalarValue::Utf8View(Some("Float64".to_string()))),
         ];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 
@@ -310,7 +324,7 @@ mod tests {
             Some(ScalarValue::LargeUtf8(Some("Boolean".to_string()))),
         ];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 
@@ -329,7 +343,7 @@ mod tests {
             Some(ScalarValue::Utf8(Some("InvalidDataType".to_string()))),
         ];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 
@@ -354,7 +368,7 @@ mod tests {
         let field2 = Arc::new(Field::new("type", DataType::Utf8, false));
         let scalar = [Some(ScalarValue::Utf8(Some("count()".to_string()))), None];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 
@@ -372,7 +386,7 @@ mod tests {
             Some(ScalarValue::Int32(Some(42))),
         ];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 
@@ -390,7 +404,7 @@ mod tests {
             Some(ScalarValue::Utf8(Some(String::new()))),
         ];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 
@@ -406,7 +420,7 @@ mod tests {
         let scalar =
             [Some(ScalarValue::Utf8(Some("count()".to_string()))), Some(ScalarValue::Utf8(None))];
         let args = ReturnFieldArgs {
-            arg_fields:       &[field1, field2],
+            arg_fields: &[field1, field2],
             scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref()],
         };
 

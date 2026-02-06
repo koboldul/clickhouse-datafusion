@@ -10,11 +10,13 @@ mod reexports {
 
 pub use reexports::*;
 
+pub use super::aliases::{create_alias_udaf, create_alias_udf};
 pub use super::analyzer::function_pushdown::ClickHouseFunctionPushdown;
 pub use super::builders::*;
 #[cfg(not(feature = "mocks"))]
 pub use super::connection::ArrowPoolConnection;
 pub use super::connection::{ClickHouseConnection, ClickHouseConnectionPool};
+pub use super::context::ClickHouseContextExtension;
 pub use super::context::*;
 pub use super::providers::*;
 pub use super::sink::ClickHouseDataSink;
@@ -22,3 +24,12 @@ pub use super::sql::SqlTable;
 pub use super::table_factory::{ClickHouseTableFactory, ClickHouseTableProviderFactory};
 pub use super::udfs::eval::clickhouse_eval_udf;
 pub use super::udfs::register_clickhouse_functions;
+pub use super::udfs::{
+    DictionarySchemaMap, arg_max_udaf, dict_get_udf, to_start_of_month_udf, to_start_of_week_udf,
+};
+
+// Federation exports (when feature is enabled)
+#[cfg(feature = "federation")]
+pub use super::federation::{
+    ClickHouseFederationProvider, FederatedContext, FunctionMapper, TransformationRule,
+};

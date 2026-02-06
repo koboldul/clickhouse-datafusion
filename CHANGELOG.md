@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Bug Fixes
 
 - Upgrades datafusion, addresses breaking changes ([#48](https://github.com/georgeleepatterson/clickhouse-datafusion/issues/48)) ([4b1ebe1](https://github.com/georgeleepatterson/clickhouse-datafusion/commit/4b1ebe13c98536a6e03800cc2ca9bd37e20c8cb5))
+- Upgrade to DataFusion 52.1.0 and fix test assertions for power function type coercion changes
 
 ### Features
 
