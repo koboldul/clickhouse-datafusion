@@ -619,3 +619,57 @@ impl ClickHouseTableCreator {
         Ok(self.builder)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_arrow_options() {
+        let opts = default_arrow_options();
+        assert!(opts.strings_as_strings, "strings_as_strings should be true");
+        assert!(!opts.strict_schema, "strict_schema should be false");
+        assert!(
+            opts.disable_strict_schema_ddl,
+            "disable_strict_schema_ddl should be true"
+        );
+        assert!(
+            opts.nullable_array_default_empty,
+            "nullable_array_default_empty should be true"
+        );
+    }
+
+    #[test]
+    fn test_default_catalog_name() {
+        assert_eq!(DEFAULT_CLICKHOUSE_CATALOG, "clickhouse");
+    }
+
+    #[test]
+    fn test_clickhouse_builder_new() {
+        let builder = ClickHouseBuilder::new("http://localhost:8123");
+        assert!(builder.write_concurrency.is_none());
+    }
+
+    #[test]
+    fn test_clickhouse_builder_with_write_concurrency() {
+        let builder = ClickHouseBuilder::new("http://localhost:8123").with_write_concurrency(8);
+        assert_eq!(builder.write_concurrency, Some(8));
+    }
+
+    #[test]
+    fn test_clickhouse_builder_with_coercion() {
+        let builder = ClickHouseBuilder::new("http://localhost:8123").with_coercion(true);
+        assert!(builder.factory.coerce_schemas());
+    }
+
+    #[test]
+    fn test_clickhouse_builder_chaining() {
+        let builder = ClickHouseBuilder::new("http://localhost:8123")
+            .with_coercion(true)
+            .with_write_concurrency(4)
+            .configure_arrow_options(|opts| opts.with_strings_as_strings(false));
+
+        assert!(builder.factory.coerce_schemas());
+        assert_eq!(builder.write_concurrency, Some(4));
+    }
+}

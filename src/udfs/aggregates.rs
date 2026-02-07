@@ -130,4 +130,39 @@ mod tests {
         let udaf = arg_max_udaf();
         assert_eq!(udaf.name(), "argMax");
     }
+
+    #[test]
+    fn test_arg_max_default() {
+        let udaf = ArgMax::default();
+        assert_eq!(udaf.name(), "argMax");
+    }
+
+    #[test]
+    fn test_arg_max_accumulator_returns_error() {
+        use std::sync::Arc;
+        use datafusion::logical_expr::function::AccumulatorArgs;
+
+        let udaf = ArgMax::new();
+        let schema = datafusion::arrow::datatypes::Schema::new(vec![
+            datafusion::arrow::datatypes::Field::new("val", DataType::Int64, false),
+            datafusion::arrow::datatypes::Field::new("key", DataType::Int32, false),
+        ]);
+        let return_field = Arc::new(
+            datafusion::arrow::datatypes::Field::new("argMax", DataType::Int64, true),
+        );
+        let acc_args = AccumulatorArgs {
+            return_field: return_field.clone(),
+            schema: &schema,
+            ignore_nulls: false,
+            order_bys: &[],
+            name: "argMax",
+            is_distinct: false,
+            is_reversed: false,
+            exprs: &[],
+            expr_fields: &[],
+        };
+        let result = udaf.accumulator(acc_args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("placeholder"));
+    }
 }

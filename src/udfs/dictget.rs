@@ -4,7 +4,7 @@
 //! `DataFusion` to parse and plan queries containing `ClickHouse` dictionary lookups.
 //! The actual execution happens on the `ClickHouse` server.
 
-use datafusion::arrow::datatypes::{DataType, Field, FieldRef, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, FieldRef};
 use datafusion::common::{Result, ScalarValue, internal_err};
 use datafusion::logical_expr::{
     ColumnarValue, ReturnFieldArgs, ScalarFunctionArgs, ScalarUDF, ScalarUDFImpl, Signature,
@@ -48,18 +48,16 @@ impl DictGet {
     /// Create a new `DictGet` UDF with the provided dictionary schema map.
     pub fn new(dictionary_schema: Arc<DictionarySchemaMap>) -> Self {
         Self {
-            // Signature accepts 3 or 4 arguments
-            // For dated dictionaries, the 4th argument is typically a Timestamp
+            // Signature accepts 3 or 4 arguments:
+            //   dictGet(dictionary_name, column_name, key)
+            //   dictGet(dictionary_name, column_name, key, timestamp)
+            //
+            // The first two args are always Utf8 literals. The key (3rd arg) can be any type
+            // (UInt64, UUID, Utf8, etc.) depending on the dictionary layout. The optional 4th
+            // argument is a timestamp for range-hashed dictionaries.
+            // Actual type validation happens in `data_type_from_args` via the schema map.
             signature: Signature::one_of(
-                vec![
-                    TypeSignature::Exact(vec![DataType::Utf8, DataType::Utf8, DataType::Utf8]),
-                    TypeSignature::Exact(vec![
-                        DataType::Utf8,
-                        DataType::Utf8,
-                        DataType::Utf8,
-                        DataType::Timestamp(TimeUnit::Second, None),
-                    ]),
-                ],
+                vec![TypeSignature::Any(3), TypeSignature::Any(4)],
                 Volatility::Immutable,
             ),
             dictionary_schema,
@@ -211,7 +209,7 @@ mod tests {
             ("active".to_string(), DataType::Boolean),
         ]);
 
-        schema_map.insert("test_dict".to_string(), dict_columns);
+        drop(schema_map.insert("test_dict".to_string(), dict_columns));
 
         Arc::new(schema_map)
     }
@@ -383,5 +381,135 @@ mod tests {
         assert_eq!(field.name(), "dictGet");
         assert_eq!(field.data_type(), &DataType::Float64);
         assert!(field.is_nullable());
+    }
+
+    #[test]
+    fn test_data_type_from_args_4_args_dated_dictionary() {
+        let schema = create_test_schema();
+        let dict_get = DictGet::new(schema);
+
+        let field1 = Arc::new(Field::new("dict", DataType::Utf8, false));
+        let field2 = Arc::new(Field::new("column", DataType::Utf8, false));
+        let field3 = Arc::new(Field::new("key", DataType::Utf8, false));
+        let field4 = Arc::new(Field::new(
+            "ts",
+            DataType::Timestamp(datafusion::arrow::datatypes::TimeUnit::Second, None),
+            false,
+        ));
+
+        let scalar = [
+            Some(ScalarValue::Utf8(Some("test_dict".to_string()))),
+            Some(ScalarValue::Utf8(Some("name".to_string()))),
+            Some(ScalarValue::Utf8(Some("key123".to_string()))),
+            None, // timestamp doesn't need to be a constant
+        ];
+
+        let args = ReturnFieldArgs {
+            arg_fields: &[field1, field2, field3, field4],
+            scalar_arguments: &[
+                scalar[0].as_ref(),
+                scalar[1].as_ref(),
+                scalar[2].as_ref(),
+                scalar[3].as_ref(),
+            ],
+        };
+
+        let result = dict_get.data_type_from_args(&args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DataType::Utf8);
+    }
+
+    #[test]
+    fn test_data_type_from_args_integer_key() {
+        let schema = create_test_schema();
+        let dict_get = DictGet::new(schema);
+
+        // Key is Int64, not Utf8 — should still work with the broadened signature
+        let field1 = Arc::new(Field::new("dict", DataType::Utf8, false));
+        let field2 = Arc::new(Field::new("column", DataType::Utf8, false));
+        let field3 = Arc::new(Field::new("key", DataType::Int64, false));
+
+        let scalar = [
+            Some(ScalarValue::Utf8(Some("test_dict".to_string()))),
+            Some(ScalarValue::Utf8(Some("age".to_string()))),
+            None, // key is not a constant
+        ];
+
+        let args = ReturnFieldArgs {
+            arg_fields: &[field1, field2, field3],
+            scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref(), scalar[2].as_ref()],
+        };
+
+        let result = dict_get.data_type_from_args(&args);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), DataType::Int32);
+    }
+
+    #[test]
+    fn test_data_type_from_args_first_arg_not_constant() {
+        let schema = create_test_schema();
+        let dict_get = DictGet::new(schema);
+
+        let field1 = Arc::new(Field::new("dict", DataType::Utf8, false));
+        let field2 = Arc::new(Field::new("column", DataType::Utf8, false));
+        let field3 = Arc::new(Field::new("key", DataType::Utf8, false));
+
+        let scalar: [Option<ScalarValue>; 3] = [
+            None, // first arg is not a constant
+            Some(ScalarValue::Utf8(Some("name".to_string()))),
+            Some(ScalarValue::Utf8(Some("key123".to_string()))),
+        ];
+
+        let args = ReturnFieldArgs {
+            arg_fields: &[field1, field2, field3],
+            scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref(), scalar[2].as_ref()],
+        };
+
+        let result = dict_get.data_type_from_args(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("constant string"));
+    }
+
+    #[test]
+    fn test_data_type_from_args_second_arg_not_constant() {
+        let schema = create_test_schema();
+        let dict_get = DictGet::new(schema);
+
+        let field1 = Arc::new(Field::new("dict", DataType::Utf8, false));
+        let field2 = Arc::new(Field::new("column", DataType::Utf8, false));
+        let field3 = Arc::new(Field::new("key", DataType::Utf8, false));
+
+        let scalar: [Option<ScalarValue>; 3] = [
+            Some(ScalarValue::Utf8(Some("test_dict".to_string()))),
+            None, // second arg is not a constant
+            Some(ScalarValue::Utf8(Some("key123".to_string()))),
+        ];
+
+        let args = ReturnFieldArgs {
+            arg_fields: &[field1, field2, field3],
+            scalar_arguments: &[scalar[0].as_ref(), scalar[1].as_ref(), scalar[2].as_ref()],
+        };
+
+        let result = dict_get.data_type_from_args(&args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("constant string"));
+    }
+
+    #[test]
+    fn test_invoke_with_args_returns_error() {
+        let schema = create_test_schema();
+        let dict_get = DictGet::new(schema);
+
+        let args = ScalarFunctionArgs {
+            args: vec![],
+            arg_fields: vec![],
+            number_rows: 0,
+            return_field: Arc::new(Field::new("test", DataType::Utf8, true)),
+            config_options: Arc::new(datafusion::config::ConfigOptions::default()),
+        };
+
+        let result = dict_get.invoke_with_args(args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("placeholder UDF"));
     }
 }

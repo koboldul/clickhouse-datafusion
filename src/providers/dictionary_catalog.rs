@@ -273,10 +273,11 @@ mod tests {
     use datafusion::arrow::datatypes::DataType;
 
     fn create_test_dictionary() -> DictionaryMetadata {
-        let mut columns = HashMap::new();
-        columns.insert("id".to_string(), DataType::Int32);
-        columns.insert("name".to_string(), DataType::Utf8);
-        columns.insert("value".to_string(), DataType::Float64);
+        let columns = HashMap::from([
+            ("id".to_string(), DataType::Int32),
+            ("name".to_string(), DataType::Utf8),
+            ("value".to_string(), DataType::Float64),
+        ]);
 
         DictionaryMetadata::new(
             "test_dict".to_string(),
@@ -337,7 +338,7 @@ mod tests {
     fn test_dictionary_schema_provider() {
         let dict = Arc::new(create_test_dictionary());
         let mut dictionaries = HashMap::new();
-        dictionaries.insert("test_dict".to_string(), dict.clone());
+        drop(dictionaries.insert("test_dict".to_string(), dict.clone()));
 
         let provider = DictionarySchemaProvider::new(dictionaries);
         assert_eq!(provider.table_names().len(), 1);
@@ -362,7 +363,7 @@ mod tests {
 
         let schema_provider: Arc<dyn SchemaProvider> =
             Arc::new(DictionarySchemaProvider::new(HashMap::new()));
-        catalog.register_schema("default", schema_provider);
+        drop(catalog.register_schema("default", schema_provider));
 
         assert_eq!(catalog.schema_names().len(), 1);
         assert!(catalog.schema("default").is_some());
@@ -375,10 +376,87 @@ mod tests {
         assert_eq!(catalog_list.catalog_names().len(), 0);
 
         let catalog: Arc<dyn CatalogProvider> = Arc::new(DictionaryCatalogProvider::new());
-        catalog_list.register_catalog("dictionaries".to_string(), catalog);
+        drop(catalog_list.register_catalog("dictionaries".to_string(), catalog));
 
         assert_eq!(catalog_list.catalog_names().len(), 1);
         assert!(catalog_list.catalog("dictionaries").is_some());
         assert!(catalog_list.catalog("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_dictionary_layout_flat() {
+        let layout = DictionaryLayout::Flat { primary_key: "id".to_string() };
+        let keys = layout.key_columns();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0], "id");
+    }
+
+    #[tokio::test]
+    async fn test_dictionary_schema_provider_table() {
+        let dict = Arc::new(create_test_dictionary());
+        let mut dictionaries = HashMap::new();
+        drop(dictionaries.insert("test_dict".to_string(), dict));
+
+        let provider = DictionarySchemaProvider::new(dictionaries);
+
+        // Should return a table provider for existing dictionary
+        let table = provider.table("test_dict").await.unwrap();
+        assert!(table.is_some());
+        let table = table.unwrap();
+        assert_eq!(table.schema().fields().len(), 3);
+        assert_eq!(table.table_type(), TableType::Base);
+
+        // Should return None for non-existent dictionary
+        let table = provider.table("nonexistent").await.unwrap();
+        assert!(table.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_dictionary_table_provider_scan_returns_error() {
+        let dict = Arc::new(create_test_dictionary());
+        let mut dictionaries = HashMap::new();
+        drop(dictionaries.insert("test_dict".to_string(), dict));
+
+        let provider = DictionarySchemaProvider::new(dictionaries);
+        let table = provider.table("test_dict").await.unwrap().unwrap();
+
+        // scan() should return an error since dictionaries can't be scanned directly
+        let ctx = datafusion::prelude::SessionContext::new();
+        let result = table.scan(&ctx.state(), None, &[], None).await;
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cannot be scanned directly"),
+            "Expected 'cannot be scanned directly' in error: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_dictionary_catalog_provider_default() {
+        let catalog = DictionaryCatalogProvider::default();
+        assert_eq!(catalog.schema_names().len(), 0);
+    }
+
+    #[test]
+    fn test_dictionary_catalog_list_default() {
+        let catalog_list = DictionaryCatalogList::default();
+        assert_eq!(catalog_list.catalog_names().len(), 0);
+    }
+
+    #[test]
+    fn test_dictionary_catalog_provider_register_replaces() {
+        let catalog = DictionaryCatalogProvider::new();
+        let schema1: Arc<dyn SchemaProvider> =
+            Arc::new(DictionarySchemaProvider::new(HashMap::new()));
+        let schema2: Arc<dyn SchemaProvider> =
+            Arc::new(DictionarySchemaProvider::new(HashMap::new()));
+
+        // First registration returns None
+        let prev = catalog.register_schema("default", schema1);
+        assert!(prev.is_none());
+
+        // Second registration returns the previous provider
+        let prev = catalog.register_schema("default", schema2);
+        assert!(prev.is_some());
     }
 }

@@ -327,4 +327,49 @@ mod tests {
         assert!(ctx.state().scalar_functions().contains_key("alias1"));
         assert!(ctx.state().scalar_functions().contains_key("alias2"));
     }
+
+    #[test]
+    fn test_alias_udaf_name() {
+        let inner = Arc::new(AggregateUDF::from(crate::udfs::aggregates::ArgMax::new()));
+        let aliased = create_alias_udaf(inner.clone(), "my_argmax");
+
+        assert_eq!(inner.name(), "argMax");
+        assert_eq!(aliased.name(), "my_argmax");
+    }
+
+    #[test]
+    fn test_register_udaf_with_aliases() {
+        let ctx = SessionContext::new();
+        let udaf = Arc::new(AggregateUDF::from(crate::udfs::aggregates::ArgMax::new()));
+
+        register_udaf_with_aliases(&ctx, udaf, &["amax", "arg_max"]).unwrap();
+
+        let state = ctx.state();
+        let agg_functions = state.aggregate_functions();
+        assert!(agg_functions.contains_key("argMax"));
+        assert!(agg_functions.contains_key("amax"));
+        assert!(agg_functions.contains_key("arg_max"));
+    }
+
+    #[test]
+    fn test_alias_udf_equality() {
+        let udf = Arc::new(ScalarUDF::from(TestUdf::new()));
+        let alias1 = AliasUdf::new(udf.clone(), "alias_a");
+        let alias2 = AliasUdf::new(udf.clone(), "alias_a");
+        let alias3 = AliasUdf::new(udf.clone(), "alias_b");
+
+        assert_eq!(alias1, alias2);
+        assert_ne!(alias1, alias3);
+    }
+
+    #[test]
+    fn test_alias_udaf_equality() {
+        let udaf = Arc::new(AggregateUDF::from(crate::udfs::aggregates::ArgMax::new()));
+        let alias1 = AliasUdaf::new(udaf.clone(), "alias_a");
+        let alias2 = AliasUdaf::new(udaf.clone(), "alias_a");
+        let alias3 = AliasUdaf::new(udaf.clone(), "alias_b");
+
+        assert_eq!(alias1, alias2);
+        assert_ne!(alias1, alias3);
+    }
 }

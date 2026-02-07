@@ -1,9 +1,19 @@
 //! Implementations for federating `ClickHouse` schemas into a `DataFusion` [`SessionContext`].
 //!
 //! This module provides federation capabilities for `ClickHouse`, including:
-//! - Function mapping/translation during federation
-//! - Transformation rules for plan conversion
-//! - SQL generation from logical plans
+//!
+//! - [`FederatedContext`] trait for enabling federation on a [`SessionContext`] (stable)
+//! - [`ClickHouseFederationProvider`] for plan transformation and SQL generation (**experimental**)
+//! - [`FunctionMapper`] trait for function dealiasing during federation (**experimental**)
+//! - [`TransformationRule`] trait for custom plan transformations (**experimental**)
+//!
+//! # Experimental APIs
+//!
+//! [`ClickHouseFederationProvider`], [`FunctionMapper`], and [`TransformationRule`] are building
+//! blocks for advanced federation scenarios. They are **not yet integrated** into the default
+//! federation flow (which uses `datafusion-federation`'s optimizer rules directly). Consumers
+//! must manually invoke [`ClickHouseFederationProvider::transform`] or
+//! [`ClickHouseFederationProvider::plan_to_sql`] in their own federation implementations.
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -18,11 +28,11 @@ pub use datafusion_federation; // Re-export
 
 use crate::dialect::ClickHouseDialect;
 
-// TODO: Docs - Need a lot more explaining here. Also, how does this interplay with the structures
-// in `context`? Need to consolidate and define this, ensure the order is hard to mess up.
-//
-/// Use to modify an existing [`SessionContext`] to be used in a federated context, pushing queries
-/// and statements down to the sql to be run on remote schemas.
+/// Modify an existing [`SessionContext`] to enable federated query execution.
+///
+/// When federation is enabled, `DataFusion`'s optimizer will attempt to push entire query subtrees
+/// down to the remote `ClickHouse` server rather than pulling all data locally. This is essential
+/// for efficient cross-database joins between `ClickHouse` and other `DataFusion` sources.
 pub trait FederatedContext {
     fn federate(self) -> SessionContext;
 
@@ -58,9 +68,10 @@ impl FederatedContext for SessionContext {
 
 /// Trait for mapping/translating functions during federation.
 ///
-/// This trait enables function dealiasing and translation when federating
-/// plans to `ClickHouse`. Implementations can provide mappings from `DataFusion`
-/// functions to their `ClickHouse`-specific equivalents.
+/// **Experimental**: This trait is not yet integrated into the default federation flow.
+///
+/// Implementations provide mappings from `DataFusion` functions to their `ClickHouse`-specific
+/// equivalents, enabling function dealiasing when generating SQL for remote execution.
 pub trait FunctionMapper: Send + Sync + Debug {
     /// Try to dealias a scalar UDF (return the original function if aliased)
     fn try_dealias_udf(&self, udf: &Arc<ScalarUDF>) -> Option<Arc<ScalarUDF>>;
@@ -71,8 +82,10 @@ pub trait FunctionMapper: Send + Sync + Debug {
 
 /// Transformation rule for converting plan nodes.
 ///
-/// This trait allows custom transformation logic to be applied to logical plans
-/// during federation, enabling ClickHouse-specific optimizations and rewrites.
+/// **Experimental**: This trait is not yet integrated into the default federation flow.
+///
+/// Allows custom transformation logic to be applied to logical plans during federation,
+/// enabling `ClickHouse`-specific optimizations and rewrites.
 pub trait TransformationRule: Send + Sync + Debug {
     /// Check if this rule applies to the given plan
     fn matches(&self, plan: &LogicalPlan) -> bool;
@@ -86,8 +99,12 @@ pub trait TransformationRule: Send + Sync + Debug {
 
 /// Federation provider for `ClickHouse`.
 ///
-/// This provider handles the transformation of `DataFusion` logical plans into
-/// `ClickHouse`-compatible SQL, including function translation and plan optimization.
+/// **Experimental**: This provider is not yet wired into the default federation flow. It must be
+/// invoked manually via [`transform`](Self::transform) or [`plan_to_sql`](Self::plan_to_sql).
+///
+/// Handles the transformation of `DataFusion` logical plans into `ClickHouse`-compatible SQL,
+/// including function translation via [`FunctionMapper`] and plan optimization via
+/// [`TransformationRule`]s.
 #[derive(Debug)]
 pub struct ClickHouseFederationProvider {
     dialect: ClickHouseDialect,
@@ -255,6 +272,7 @@ impl Default for ClickHouseFederationProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::common::tree_node::TreeNodeRecursion;
     use datafusion::logical_expr::LogicalPlanBuilder;
     use std::sync::Arc;
 
@@ -421,6 +439,78 @@ mod tests {
 
         // Should successfully transform plan
         assert_eq!(transformed.schema().fields().len(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_transform_with_function_mapper_translates_scalar() -> Result<()> {
+        use datafusion::arrow::datatypes::{DataType, Field, Schema};
+        use datafusion::logical_expr::expr::ScalarFunction;
+
+        // Create a UDF to be "dealiased" — e.g., groupArray → array_agg
+        let original_udf = Arc::new(ScalarUDF::new_from_impl(
+            crate::udfs::placeholder::PlaceholderUDF::new("groupArray"),
+        ));
+        let target_udf = Arc::new(ScalarUDF::new_from_impl(
+            crate::udfs::placeholder::PlaceholderUDF::new("array_agg"),
+        ));
+
+        // Set up mapper
+        let mut mapper = MockFunctionMapper::new();
+        drop(mapper.udf_mappings.insert("groupArray".to_string(), target_udf));
+
+        // Build a plan with a projection containing the scalar function
+        let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, false)]));
+        let table_source =
+            Arc::new(datafusion::logical_expr::logical_plan::builder::LogicalTableSource::new(
+                schema,
+            ));
+        let plan = LogicalPlanBuilder::scan("t", table_source, None)?
+            .project(vec![Expr::ScalarFunction(ScalarFunction::new_udf(
+                original_udf,
+                vec![datafusion::prelude::col("x")],
+            ))])?
+            .build()?;
+
+        let provider =
+            ClickHouseFederationProvider::new().with_function_mapper(Arc::new(mapper));
+        let transformed = provider.transform(&plan)?;
+
+        // The function in the transformed plan should now be "array_agg"
+        let mut found_array_agg = false;
+        let _ = transformed.apply(|p| {
+            p.apply_expressions(|e| {
+                if let Expr::ScalarFunction(sf) = e {
+                    if sf.func.name() == "array_agg" {
+                        found_array_agg = true;
+                    }
+                }
+                Ok(TreeNodeRecursion::Continue)
+            })
+        })?;
+        assert!(found_array_agg, "Expected scalar function to be translated to array_agg");
+        Ok(())
+    }
+
+    #[test]
+    fn test_rule_not_applied_when_no_match() -> Result<()> {
+        let plan = LogicalPlanBuilder::empty(false).build()?;
+
+        #[derive(Debug)]
+        struct NeverMatchRule;
+        impl TransformationRule for NeverMatchRule {
+            fn matches(&self, _plan: &LogicalPlan) -> bool {
+                false
+            }
+            fn transform(&self, _plan: &LogicalPlan) -> Result<LogicalPlan> {
+                panic!("should not be called");
+            }
+        }
+
+        let rule = Arc::new(NeverMatchRule);
+        let provider = ClickHouseFederationProvider::new().with_rules(vec![rule]);
+        let _transformed = provider.transform(&plan)?;
+        // No panic means the rule was not called
         Ok(())
     }
 }

@@ -133,6 +133,7 @@ pub fn to_start_of_month_udf() -> datafusion::logical_expr::ScalarUDF {
 mod tests {
     use super::*;
     use datafusion::arrow::datatypes::{DataType, TimeUnit};
+    use std::sync::Arc;
 
     #[test]
     fn test_to_start_of_week_name() {
@@ -172,5 +173,55 @@ mod tests {
     fn test_to_start_of_month_udf() {
         let udf = to_start_of_month_udf();
         assert_eq!(udf.name(), "toStartOfMonth");
+    }
+
+    #[test]
+    fn test_to_start_of_week_default() {
+        let udf = ToStartOfWeek::default();
+        assert_eq!(udf.name(), "toStartOfWeek");
+    }
+
+    #[test]
+    fn test_to_start_of_month_default() {
+        let udf = ToStartOfMonth::default();
+        assert_eq!(udf.name(), "toStartOfMonth");
+    }
+
+    #[test]
+    fn test_to_start_of_week_invoke_returns_error() {
+        let udf = ToStartOfWeek::new();
+        let args = ScalarFunctionArgs {
+            args: vec![],
+            arg_fields: vec![],
+            number_rows: 0,
+            return_field: Arc::new(datafusion::arrow::datatypes::Field::new(
+                "test",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                true,
+            )),
+            config_options: Arc::new(datafusion::config::ConfigOptions::default()),
+        };
+        let result = udf.invoke_with_args(args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("placeholder UDF"));
+    }
+
+    #[test]
+    fn test_to_start_of_month_invoke_returns_error() {
+        let udf = ToStartOfMonth::new();
+        let args = ScalarFunctionArgs {
+            args: vec![],
+            arg_fields: vec![],
+            number_rows: 0,
+            return_field: Arc::new(datafusion::arrow::datatypes::Field::new(
+                "test",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                true,
+            )),
+            config_options: Arc::new(datafusion::config::ConfigOptions::default()),
+        };
+        let result = udf.invoke_with_args(args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("placeholder UDF"));
     }
 }

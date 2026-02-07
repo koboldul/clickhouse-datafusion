@@ -794,4 +794,124 @@ mod tests {
         let result = provider.get_window_meta("unknown_window");
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_clickhouse_query_planner_new() {
+        let planner = ClickHouseQueryPlanner::new();
+        // Should have at least the ClickHouseExtensionPlanner
+        assert!(!planner.planners.is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_query_planner_default() {
+        let planner = ClickHouseQueryPlanner::default();
+        assert!(!planner.planners.is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_query_planner_with_planner() {
+        let planner = ClickHouseQueryPlanner::new();
+        let initial_count = planner.planners.len();
+
+        let planner = planner.with_planner(
+            Arc::new(ClickHouseExtensionPlanner) as Arc<dyn ExtensionPlanner + Send + Sync>,
+        );
+        assert_eq!(planner.planners.len(), initial_count + 1);
+    }
+
+    #[test]
+    fn test_clickhouse_query_planner_new_with_planners() {
+        let extra: Vec<Arc<dyn ExtensionPlanner + Send + Sync>> =
+            vec![Arc::new(ClickHouseExtensionPlanner)];
+        let planner = ClickHouseQueryPlanner::new_with_planners(extra);
+        // Should have the built-in planner(s) plus the one we added
+        assert!(planner.planners.len() >= 2);
+    }
+
+    #[test]
+    fn test_clickhouse_query_planner_debug() {
+        let planner = ClickHouseQueryPlanner::new();
+        let debug = format!("{planner:?}");
+        assert!(debug.contains("ClickHouseQueryPlanner"));
+    }
+
+    #[test]
+    fn test_prepare_session_context() {
+        let ctx = SessionContext::new();
+        let prepared = prepare_session_context(ctx, None);
+
+        // Should have clickhouse UDFs registered
+        let state = prepared.state();
+        assert!(state.scalar_functions().contains_key("clickhouse"));
+        assert!(state.scalar_functions().contains_key("apply"));
+    }
+
+    #[test]
+    fn test_prepare_session_context_with_planners() {
+        let ctx = SessionContext::new();
+        let extra: Vec<Arc<dyn ExtensionPlanner + Send + Sync>> =
+            vec![Arc::new(ClickHouseExtensionPlanner)];
+        let prepared = prepare_session_context(ctx, Some(extra));
+
+        let state = prepared.state();
+        assert!(state.scalar_functions().contains_key("clickhouse"));
+    }
+
+    #[test]
+    fn test_configure_analyzer_rules() {
+        let ctx = SessionContext::new();
+        let state = ctx.state();
+        let original_count = state.analyzer().rules.len();
+        let rules = configure_analyzer_rules(&state);
+
+        // The pushdown rule should have been inserted
+        assert_eq!(
+            rules.len(),
+            original_count + 1,
+            "Should have inserted the ClickHouseFunctionPushdown rule"
+        );
+    }
+
+    #[test]
+    fn test_clickhouse_session_context_from() {
+        let ctx = SessionContext::new();
+        let ch_ctx = ClickHouseSessionContext::from(ctx);
+
+        // Should be able to access inner context
+        assert!(!ch_ctx.session_context().state().scalar_functions().is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_session_context_from_ref() {
+        let ctx = SessionContext::new();
+        let ch_ctx = ClickHouseSessionContext::from(&ctx);
+        assert!(!ch_ctx.session_context().state().scalar_functions().is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_session_context_deref() {
+        let ctx = SessionContext::new();
+        let ch_ctx = ClickHouseSessionContext::from(ctx);
+
+        // Deref should give access to SessionContext methods
+        let _state = ch_ctx.state();
+    }
+
+    #[test]
+    fn test_clickhouse_session_context_with_session_transform() {
+        let ctx = SessionContext::new();
+        let ch_ctx = ClickHouseSessionContext::from(ctx).with_session_transform(|ctx| {
+            // Just return the same context — test that the transform chain works
+            ctx
+        });
+        assert!(!ch_ctx.session_context().state().scalar_functions().is_empty());
+    }
+
+    #[test]
+    fn test_clickhouse_session_context_into_session_context() {
+        let ctx = SessionContext::new();
+        let ch_ctx = ClickHouseSessionContext::from(ctx);
+        let inner = ch_ctx.into_session_context();
+        assert!(inner.state().scalar_functions().contains_key("clickhouse"));
+    }
 }

@@ -11,6 +11,7 @@ pub mod placeholder;
 pub mod time_functions;
 
 use std::str::FromStr;
+use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{DataType, Field, FieldRef};
 use datafusion::common::{plan_datafusion_err, plan_err};
@@ -24,20 +25,17 @@ pub use aggregates::arg_max_udaf;
 pub use dictget::{DictionarySchemaMap, dict_get_udf};
 pub use time_functions::{to_start_of_month_udf, to_start_of_week_udf};
 
-// TODO: Docs - explain how this registers the best-effort UDF that can be used when the full
-// `ClickHouseQueryPlanner` is not available.
-//
-/// Registers `ClickHouse`-specific UDFs and UDAFs with the provided [`SessionContext`].
+/// Registers `ClickHouse`-specific UDFs, UDAFs, and their aliases with the provided
+/// [`SessionContext`].
+///
+/// This delegates to [`crate::context::ClickHouseContextExtension::register_all`] with an empty
+/// dictionary schema map. If you need `dictGet` to resolve dictionary column types at planning time,
+/// use [`crate::context::ClickHouseContextExtension::new`] with a populated schema map instead.
 pub fn register_clickhouse_functions(ctx: &SessionContext) {
-    // Scalar UDFs
-    ctx.register_udf(eval::clickhouse_eval_udf());
-    ctx.register_udf(clickhouse::clickhouse_udf());
-    ctx.register_udf(apply::clickhouse_apply_udf());
-    ctx.register_udf(to_start_of_week_udf());
-    ctx.register_udf(to_start_of_month_udf());
-
-    // Aggregate UDAFs
-    ctx.register_udaf(arg_max_udaf());
+    let extension =
+        crate::context::ClickHouseContextExtension::new(Arc::new(std::collections::HashMap::new()));
+    // Ignore the error — registration failures are non-fatal here (e.g. duplicate registration)
+    drop(extension.register_all(ctx));
 }
 
 /// Helper function to extract return [`DataType`] from second UDF arg
@@ -268,12 +266,23 @@ mod tests {
         let ctx = SessionContext::new();
         register_clickhouse_functions(&ctx);
 
-        // Check that the clickhouse function was registered
         let state = ctx.state();
         let functions = state.scalar_functions();
-        assert!(functions.contains_key("clickhouse_eval"));
-        assert!(functions.contains_key("clickhouse"));
-        assert!(functions.contains_key("apply"));
+
+        // Core UDFs
+        assert!(functions.contains_key("clickhouse_eval"), "clickhouse_eval should be registered");
+        assert!(functions.contains_key("clickhouse"), "clickhouse should be registered");
+        assert!(functions.contains_key("apply"), "apply should be registered");
+
+        // UDFs added via ClickHouseContextExtension
+        assert!(functions.contains_key("dictGet"), "dictGet should be registered");
+        assert!(functions.contains_key("toStartOfWeek"), "toStartOfWeek should be registered");
+        assert!(functions.contains_key("toStartOfMonth"), "toStartOfMonth should be registered");
+
+        // Aggregate UDAFs
+        let agg_functions = state.aggregate_functions();
+        assert!(agg_functions.contains_key("argMax"), "argMax should be registered");
+        assert!(agg_functions.contains_key("argmax"), "argmax alias should be registered");
     }
 
     #[test]
